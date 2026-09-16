@@ -14,6 +14,10 @@ egyptian_legal_rag.egg-info
 mlruns/
 mlruns_artifacts/
 mlflow.db
+# DVC cache and local config with credentials
+/.dvc/cache
+/.dvc/tmp
+.dvc/config.local
 
 
 
