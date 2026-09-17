@@ -1,0 +1,67 @@
+schema: '2.0'
+stages:
+  extract:
+    cmd: python -m src.extract_to_json
+    deps:
+    - path: data/raw/egyptian_civil_code_bilingual.pdf
+      hash: md5
+      md5: 5086ef5f16f15d856278db943e58e948
+      size: 2599703
+    - path: src/extract.py
+      hash: md5
+      md5: 0fc01d3faebaa2c3c5b4a4870a9357c7
+      size: 11143
+    outs:
+    - path: data/processed/articles.json
+      hash: md5
+      md5: 64a77836ff70c1ae2ab9c2d59bd11c0a
+      size: 1107751
+  ingest:
+    cmd: python -m src.ingest_from_json
+    deps:
+    - path: data/processed/articles.json
+      hash: md5
+      md5: 64a77836ff70c1ae2ab9c2d59bd11c0a
+      size: 1107751
+    - path: src/chunk_embed.py
+      hash: md5
+      md5: ddd0d4d96ce5e85fe89614676375770b
+      size: 4650
+    params:
+      params.yaml:
+        embedding_dim: 1024
+        embedding_model: BAAI/bge-m3
+    outs:
+    - path: data/processed/ingest_receipt.json
+      hash: md5
+      md5: 3e8c0238c17bffd439a81f0c27ebf1c7
+      size: 195
+  evaluate:
+    cmd: python -m src.evaluate --run-name "dvc-repro" --top-k 3
+    deps:
+    - path: data/processed/ingest_receipt.json
+      hash: md5
+      md5: 3e8c0238c17bffd439a81f0c27ebf1c7
+      size: 195
+    - path: eval/golden_dataset.json
+      hash: md5
+      md5: 30980af82425a5624967813adc74167d
+      size: 5376
+    - path: src/evaluate.py
+      hash: md5
+      md5: a77dfc7efe51ddede326ea896e4ca43a
+      size: 5867
+    - path: src/retrieve.py
+      hash: md5
+      md5: aab95796d7a55c2faea94f390a6f938b
+      size: 4877
+    params:
+      params.yaml:
+        embedding_model: BAAI/bge-m3
+        reranker_model: BAAI/bge-reranker-v2-m3
+        reranker_top_k: 3
+    outs:
+    - path: eval/metrics.json
+      hash: md5
+      md5: 7a99cbc3426e44e4b18b768c97eb92aa
+      size: 146

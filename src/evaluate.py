@@ -2,7 +2,6 @@
 USAGE:
     python -m src.evaluate --run-name "baseline-top3" --top-k 3
 """
-
 import argparse
 import json
 import os
@@ -10,9 +9,11 @@ import time
 from pathlib import Path
 
 import mlflow
+import yaml
 
 from src.retrieve import Retriever
 from src.config import settings
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_DATASET_PATH = PROJECT_ROOT / "eval" / "golden_dataset.json"
@@ -21,6 +22,39 @@ GOLDEN_DATASET_PATH = PROJECT_ROOT / "eval" / "golden_dataset.json"
 def load_golden_dataset() -> list[dict]:
     with open(GOLDEN_DATASET_PATH, encoding="utf-8") as f:
         return json.load(f)
+
+
+def get_dvc_md5(dvc_pointer_path: Path) -> str:
+    """Reads the content hash directly from a .dvc pointer file.
+
+    This is local and instant (no network call to the remote), unlike
+    `dvc get-url`, which resolves a remote URL and can be slow or fail
+    without connectivity. The md5 hash IS the exact fingerprint of the
+    file's content at the time it was tracked with `dvc add`.
+    """
+    if not dvc_pointer_path.exists():
+        return "not-tracked"
+
+    with open(dvc_pointer_path, encoding="utf-8") as f:
+        meta = yaml.safe_load(f)
+
+    try:
+        return meta["outs"][0]["md5"]
+    except (KeyError, IndexError, TypeError):
+        return "unknown"
+
+
+def log_dvc_lineage(project_root: Path) -> None:
+    """Tags the current MLflow run with the exact DVC-tracked version of
+    the golden dataset and the source PDF, so any run can be traced back
+    to the exact bytes it was evaluated against."""
+    golden_hash = get_dvc_md5(project_root / "eval" / "golden_dataset.json.dvc")
+    pdf_hash = get_dvc_md5(
+        project_root / "data" / "raw" / "egyptian_civil_code_bilingual.pdf.dvc"
+    )
+
+    mlflow.set_tag("dvc_golden_dataset_md5", golden_hash)
+    mlflow.set_tag("dvc_source_pdf_md5", pdf_hash)
 
 
 def evaluate_retriever(retriever: Retriever, dataset: list[dict], top_k: int) -> dict:
@@ -92,6 +126,10 @@ def main():
         mlflow.log_param("top_k", args.top_k)
         mlflow.log_param("collection_name", settings.collection_name)
         mlflow.log_param("golden_dataset_size", len(dataset))
+        mlflow.log_param("reranker_model", settings.reranker_model)
+        mlflow.log_param("reranker_top_k", settings.reranker_top_k)
+
+        log_dvc_lineage(PROJECT_ROOT)
 
         results = evaluate_retriever(retriever, dataset, top_k=args.top_k)
 
@@ -99,12 +137,26 @@ def main():
         mlflow.log_metric("recall_at_k", results["recall_at_k"])
         mlflow.log_metric("mrr", results["mrr"])
         mlflow.log_metric("avg_latency_ms", results["avg_latency_ms"])
-        # Locally for you 
+
+        # Locally for you
         artifact_path = PROJECT_ROOT / "mlruns_artifacts" / "last_run_details.json"
         artifact_path.parent.mkdir(exist_ok=True)
         with open(artifact_path, "w", encoding="utf-8") as f:
             json.dump(results["per_question_results"], f, ensure_ascii=False, indent=2)
         mlflow.log_artifact(str(artifact_path))
+
+        metrics_path = PROJECT_ROOT / "eval" / "metrics.json"
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "hit_rate": results["hit_rate"],
+                    "recall_at_k": results["recall_at_k"],
+                    "mrr": results["mrr"],
+                    "avg_latency_ms": results["avg_latency_ms"],
+                },
+                f,
+                indent=2,
+            )
 
         print(f"hit_rate={results['hit_rate']:.2f} "
               f"recall_at_k={results['recall_at_k']:.2f} "
